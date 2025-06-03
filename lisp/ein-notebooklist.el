@@ -143,12 +143,16 @@ Return nil if unclear what, if any, authentication applies."
                                (ein:$notebook-url-or-port it)
                              (aif ein:%notebooklist%
                                  (ein:$notebooklist-url-or-port it)))))
+         (ssh-hosts (gfgkmn/remote-get-ssh-hosts))
          (url-or-port-list
           (-distinct (mapcar #'ein:url
                              (append (when default (list default))
                                      (if (stringp ein:urls)
                                          (list ein:urls)
                                        ein:urls)
+                                     (mapcar (lambda (host)
+                                               (format "http://%s:8888" host))
+                                             ssh-hosts)
                                      (mapcar
                                       (lambda (json)
                                         (cl-destructuring-bind (&key url &allow-other-keys)

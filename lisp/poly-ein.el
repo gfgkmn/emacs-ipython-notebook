@@ -357,7 +357,7 @@ But `C-x b` seems to consult `buffer-list' and not the C (window)->prev_buffers.
     (let* ((buffer-list (frame-parameter nil 'buffer-list))
            (pos-visible (seq-position
                          buffer-list
-                         (pm--visible-buffer-name)
+                         (pm--buffer-name)
                          (lambda (x visible*)
                            (string-prefix-p (buffer-name x) visible*)))))
       ;; no way to know if i've switched in or out of indirect buf.
@@ -382,7 +382,7 @@ But `C-x b` seems to consult `buffer-list' and not the C (window)->prev_buffers.
   (add-hook 'ido-make-buffer-list-hook
 	    (lambda ()
 	      (defvar ido-temp-list)
-	      (when-let ((visible (pm--visible-buffer-name)))
+	      (when-let ((visible (pm--buffer-name)))
 		(ido-to-end (delq nil
 				  (mapcar (lambda (x)
 					    (when (string-prefix-p x visible) x))
