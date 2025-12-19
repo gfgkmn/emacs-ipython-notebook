@@ -91,20 +91,37 @@
 
 (defun ein:ipdb--handle-iopub-reply (kernel packet)
   (cl-destructuring-bind
-      (&key content &allow-other-keys)
+      (&key header content &allow-other-keys)
       (ein:json-read-from-string packet)
     (-when-let* ((session (ein:ipdb-get-session kernel))
                  (buffer (ein:$ipdb-session-buffer session))
-                 (prompt (ein:$ipdb-session-prompt session))
                  (proc (get-buffer-process buffer))
                  (proc-live-p (process-live-p proc)))
-      (let ((text (plist-get content :text))
-            (ename (plist-get content :ename)))
+      (let* ((msg-type (plist-get header :msg_type))
+             (ename (plist-get content :ename))
+             (text (cond
+                    ;; Stream output (stdout/stderr)
+                    ((member msg-type '("stream"))
+                     (plist-get content :text))
+                    ;; Error output
+                    ((member msg-type '("error" "pyerr"))
+                     (let ((tb (plist-get content :traceback)))
+                       (when (vectorp tb)
+                         (mapconcat #'identity tb "\n"))))
+                    ;; Execute result
+                    ((member msg-type '("execute_result" "pyout"))
+                     (plist-get (plist-get content :data) :text/plain))
+                    ;; Display data
+                    ((member msg-type '("display_data"))
+                     (plist-get (plist-get content :data) :text/plain)))))
+        ;; Output the text if we have any
         (when (stringp text)
-          (comint-output-filter proc text))
-        (if (and (stringp ename) (string-match-p "bdbquit" ename))
-            (ein:ipdb-stop-session session)
-          (comint-output-filter proc prompt))))))
+          (comint-output-filter proc text)
+          (unless (string-suffix-p "\n" text)
+            (comint-output-filter proc "\n")))
+        ;; Stop session on bdbquit error
+        (when (and (stringp ename) (string-match-p "bdbquit" ename))
+          (ein:ipdb-stop-session session))))))
 
 (defun ein:ipdb-input-sender (session proc input)
   ;; in case of eof, comint-input-sender-no-newline is t

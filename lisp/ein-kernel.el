@@ -510,7 +510,12 @@ kernel and funcall CALLBACK (kernel)"
                (cond ((string-match "^\\(ipdb> \\|(Pdb) \\)"
                                     (plist-get content :prompt))
                       (aif (ein:ipdb-get-session kernel)
-                          (pop-to-buffer (ein:$ipdb-session-buffer it))
+                          (let* ((buffer (ein:$ipdb-session-buffer it))
+                                 (proc (get-buffer-process buffer))
+                                 (prompt (ein:$ipdb-session-prompt it)))
+                            (when (and proc (process-live-p proc))
+                              (comint-output-filter proc prompt))
+                            (pop-to-buffer buffer))
                         (let* ((url-or-port (ein:$kernel-url-or-port kernel))
                                (path (ein:$kernel-path kernel))
                                (notebook (ein:notebook-get-opened-notebook
@@ -579,21 +584,21 @@ kernel and funcall CALLBACK (kernel)"
         msg-type msg-id parent-id)
       (ein:case-equal msg-type
         (("stream" "display_data" "pyout" "pyerr" "error" "execute_result")
-         (aif (plist-get callbacks :output) ;; ein:cell--handle-output
-             (ein:funcall-packed it msg-type content metadata)
-           (ein:log 'warn (concat "ein:kernel--handle-iopub-reply: "
-                                  "No :output callback for parent_id=%s")
-                    parent-id))
-         (when (ein:ipdb-get-session kernel)
-           (ein:ipdb--handle-iopub-reply kernel packet)))
+         (if (ein:ipdb-get-session kernel)
+             ;; During debug: route output ONLY to ipdb buffer
+             (ein:ipdb--handle-iopub-reply kernel packet)
+           ;; Normal: route output to cell
+           (aif (plist-get callbacks :output) ;; ein:cell--handle-output
+               (ein:funcall-packed it msg-type content metadata)
+             (ein:log 'warn (concat "ein:kernel--handle-iopub-reply: "
+                                    "No :output callback for parent_id=%s")
+                      parent-id))))
         (("status")
          (ein:case-equal (plist-get content :execution_state)
            (("busy")
             (ein:events-trigger events 'status_busy.Kernel))
            (("idle")
-            (ein:events-trigger events 'status_idle.Kernel)
-            (awhen (ein:ipdb-get-session kernel)
-              (ein:ipdb-stop-session it)))
+            (ein:events-trigger events 'status_idle.Kernel))
            (("dead")
             (ein:kernel-disconnect kernel)
             (awhen (ein:ipdb-get-session kernel)
