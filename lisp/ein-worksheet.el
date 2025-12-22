@@ -33,6 +33,7 @@
 (require 'ein-utils)
 (require 'ein-cell)
 (require 'ein-kill-ring)
+(require 'ein-cell-history)
 (require 'warnings)
 (require 'poly-ein)
 (require 'seq)
@@ -1042,6 +1043,8 @@ Do not clear input prompts when the prefix argument is given."
                     (prog1 (read-char-choice "[RET]all [a]bove [b]elow: " (list ?\r ?a ?b))
                       (message "")))))
   (cond ((ein:codecell-p cell)
+         ;; Save cell history before execution if content changed
+         (ein:cell-maybe-save-history cell)
 	 (ein:kernel-when-ready
 	  (slot-value ws 'kernel)
 	  (apply-partially
