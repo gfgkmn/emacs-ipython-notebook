@@ -127,6 +127,13 @@ This function adds NBLIST to `ein:notebooklist-map'."
   (get-buffer-create
    (format ein:notebooklist-buffer-name-template url-or-port)))
 
+(defun ein:notebooklist--extract-url-from-buffer-name ()
+  "Extract URL-OR-PORT from current buffer name.
+Returns nil if buffer name doesn't match notebooklist pattern."
+  (let ((name (buffer-name)))
+    (when (string-match "\\*ein:notebooklist \\(.+\\)\\*" name)
+      (match-string 1 name))))
+
 (defun ein:notebooklist-token-or-password (url-or-port)
   "Return token or password for URL-OR-PORT.
 
@@ -301,8 +308,16 @@ See `ein:format-time-string'."
   "Reload current Notebook list."
   (interactive)
   (setq nblist (or nblist ein:%notebooklist%))
-  (ein:notebooklist-open* (ein:$notebooklist-url-or-port nblist)
-                          (ein:$notebooklist-path nblist) resync callback))
+  (if nblist
+      (ein:notebooklist-open* (ein:$notebooklist-url-or-port nblist)
+                              (ein:$notebooklist-path nblist) resync callback)
+    ;; ein:%notebooklist% is nil - try to recover URL from buffer name
+    (let ((url-or-port (ein:notebooklist--extract-url-from-buffer-name)))
+      (if url-or-port
+          (progn
+            (ein:log 'info "Recovering notebooklist for %s" url-or-port)
+            (ein:notebooklist-login url-or-port callback))
+        (error "Cannot reload: notebooklist state is nil. Use M-x ein:login")))))
 
 ;;;###autoload
 (defun ein:notebooklist-new-notebook (url-or-port kernelspec &optional callback no-pop retry explicit-path)
