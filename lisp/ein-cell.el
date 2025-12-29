@@ -590,8 +590,15 @@ Return language name as a string or `nil' when not defined.
   (if (ein:cell-active-p cell)
       (let* ((beg (ein:cell-input-pos-min cell))
              (end (ein:cell-input-pos-max cell)))
-        (buffer-substring beg end))
-    (slot-value cell 'input)))
+        (if (and beg end)
+            (buffer-substring beg end)
+          ;; Fall back to input slot if positions are invalid
+          (if (slot-boundp cell 'input)
+              (slot-value cell 'input)
+            "")))
+    (if (slot-boundp cell 'input)
+        (slot-value cell 'input)
+      "")))
 
 (cl-defmethod ein:cell-set-text ((cell ein:basecell) text)
   (let* ((input-node (ein:cell-element-get cell :input))

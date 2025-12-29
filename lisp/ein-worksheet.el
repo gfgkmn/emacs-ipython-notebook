@@ -129,23 +129,33 @@ update the ein:%which-cell% ledger that associates changes in
   (if cached
       (or (cl-first (plist-get ein:%cell-lengths% (slot-value cell 'cell-id))) 0)
     ;; 1+ for newline
-    (1+ (- (ein:worksheet--element-start cell :input)
-           (ein:worksheet--element-start cell :prompt)))))
+    (let ((input-start (ein:worksheet--element-start cell :input))
+          (prompt-start (ein:worksheet--element-start cell :prompt)))
+      (if (and input-start prompt-start)
+          (1+ (- input-start prompt-start))
+        0))))
 
 (defsubst ein:worksheet--output-length (cell &optional cached)
   (if cached
       ;; 1 for when cell un-executed, there is still a newline
       (or (cl-second (plist-get ein:%cell-lengths% (slot-value cell 'cell-id))) 1)
-    (if (string= (slot-value cell 'cell-type) "code")
-      (- (ein:worksheet--next-cell-start cell)
-         (ein:worksheet--element-start cell :output))
+    (if (and (slot-boundp cell 'cell-type)
+             (string= (slot-value cell 'cell-type) "code"))
+        (let ((next-start (ein:worksheet--next-cell-start cell))
+              (output-start (ein:worksheet--element-start cell :output)))
+          (if (and next-start output-start)
+              (- next-start output-start)
+            0))
       0)))
 
 (defsubst ein:worksheet--total-length (cell &optional cached)
   (if cached
       (or (cl-third (plist-get ein:%cell-lengths% (slot-value cell 'cell-id))) 0)
-    (- (ein:worksheet--next-cell-start cell)
-       (ein:worksheet--element-start cell :prompt))))
+    (let ((next-start (ein:worksheet--next-cell-start cell))
+          (prompt-start (ein:worksheet--element-start cell :prompt)))
+      (if (and next-start prompt-start)
+          (- next-start prompt-start)
+        0))))
 
 (defun ein:worksheet--update-cell-lengths (cell &optional saved-input-length)
   (setq ein:%cell-lengths% (plist-put ein:%cell-lengths% (slot-value cell 'cell-id)
