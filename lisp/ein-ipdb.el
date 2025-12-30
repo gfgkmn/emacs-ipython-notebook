@@ -26,6 +26,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'dash)
 
 (defvar *ein:ipdb-sessions* (make-hash-table)
   "Kernel Id to ein:$ipdb-session.")
@@ -93,35 +94,35 @@
   (cl-destructuring-bind
       (&key header content &allow-other-keys)
       (ein:json-read-from-string packet)
-    (-when-let* ((session (ein:ipdb-get-session kernel))
-                 (buffer (ein:$ipdb-session-buffer session))
-                 (proc (get-buffer-process buffer))
-                 (proc-live-p (process-live-p proc)))
-      (let* ((msg-type (plist-get header :msg_type))
-             (ename (plist-get content :ename))
-             (text (cond
-                    ;; Stream output (stdout/stderr)
-                    ((member msg-type '("stream"))
-                     (plist-get content :text))
-                    ;; Error output
-                    ((member msg-type '("error" "pyerr"))
-                     (let ((tb (plist-get content :traceback)))
-                       (when (vectorp tb)
-                         (mapconcat #'identity tb "\n"))))
-                    ;; Execute result
-                    ((member msg-type '("execute_result" "pyout"))
-                     (plist-get (plist-get content :data) :text/plain))
-                    ;; Display data
-                    ((member msg-type '("display_data"))
-                     (plist-get (plist-get content :data) :text/plain)))))
-        ;; Output the text if we have any
-        (when (stringp text)
-          (comint-output-filter proc text)
-          (unless (string-suffix-p "\n" text)
-            (comint-output-filter proc "\n")))
-        ;; Stop session on bdbquit error
-        (when (and (stringp ename) (string-match-p "bdbquit" ename))
-          (ein:ipdb-stop-session session))))))
+    (let* ((session (ein:ipdb-get-session kernel))
+           (buffer (and session (ein:$ipdb-session-buffer session)))
+           (process (and buffer (buffer-live-p buffer) (get-buffer-process buffer))))
+      (when (and process (process-live-p process))
+        (let* ((msg-type (plist-get header :msg_type))
+               (ename (plist-get content :ename))
+               (text (cond
+                      ;; Stream output (stdout/stderr)
+                      ((member msg-type '("stream"))
+                       (plist-get content :text))
+                      ;; Error output
+                      ((member msg-type '("error" "pyerr"))
+                       (let ((tb (plist-get content :traceback)))
+                         (when (vectorp tb)
+                           (mapconcat #'identity tb "\n"))))
+                      ;; Execute result
+                      ((member msg-type '("execute_result" "pyout"))
+                       (plist-get (plist-get content :data) :text/plain))
+                      ;; Display data
+                      ((member msg-type '("display_data"))
+                       (plist-get (plist-get content :data) :text/plain)))))
+          ;; Output the text if we have any
+          (when (stringp text)
+            (comint-output-filter process text)
+            (unless (string-suffix-p "\n" text)
+              (comint-output-filter process "\n")))
+          ;; Stop session on bdbquit error
+          (when (and (stringp ename) (string-match-p "bdbquit" ename))
+            (ein:ipdb-stop-session session)))))))
 
 (defun ein:ipdb-input-sender (session proc input)
   ;; in case of eof, comint-input-sender-no-newline is t
