@@ -380,13 +380,15 @@ WARNING: OBJ and SLOT are evaluated multiple times,
       (t (cl-call-next-method)))))
 
 (cl-defmethod ein:cell-all-element ((cell ein:basecell))
-  (list (ein:cell-element-get cell :prompt)
-        (ein:cell-element-get cell :input)
-        (ein:cell-element-get cell :footer)))
+  "Return all ewoc element nodes for CELL, filtering out nil values."
+  (delq nil (list (ein:cell-element-get cell :prompt)
+                  (ein:cell-element-get cell :input)
+                  (ein:cell-element-get cell :footer))))
 
 (cl-defmethod ein:cell-all-element ((cell ein:codecell))
-  (append (cl-call-next-method)
-          (ein:cell-element-get cell :output)))
+  "Return all ewoc element nodes for CELL, filtering out nil values."
+  (delq nil (append (cl-call-next-method)
+                    (ein:cell-element-get cell :output))))
 
 (cl-defmethod ein:cell-language ((_cell ein:basecell))
   "Programming language used for CELL.
