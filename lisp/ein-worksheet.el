@@ -220,35 +220,14 @@ No one ever said it would be this hard.
       (setq ein:%which-cell% (-replace old-cell-id new-cell-id ein:%which-cell%)))
     (let (multiple-cursors-p
 	  (fill (- len-buffer-undo-list len-which-cell)))
-      (cond ((and
-	      (> (abs fill) 1)
-	      (not (setq multiple-cursors-p
-			 (cl-some
-			  (lambda (entry)
-			    (cl-flet ((check
-				       (entry bogey)
-				       (and (listp entry)
-					    (not (atom (cdr entry)))
-					    (eq (nth 1 entry) bogey))))
-			      (or (check entry 'activate-cursor-for-undo)
-				  (check entry 'deactivate-cursor-after-undo))))
-			  (cl-subseq buffer-undo-list 0 (min len-buffer-undo-list 30))))))
-	     (let ((msg (format "Undo failure diagnostic %s %s | %s"
-				buffer-undo-list ein:%which-cell% fill))
-		   (pm-allow-post-command-hook nil))
-	       (setq ein:worksheet-enable-undo nil)
-	       (ein:worksheet-undo-setup ein:%worksheet%)
-	       (when pm/polymode
-		 (dolist (b (eieio-oref pm/polymode '-buffers))
-		   (when (buffer-live-p b)
-		     (poly-ein--copy-state (ein:worksheet--get-buffer ein:%worksheet%) b))))
-	       (ein:display-warning msg :error)
-	       (error "ein:worksheet--jigger-undo-list: aborting")))
-	    ((< fill 0)
+      ;; Try to recover from desync gracefully instead of erroring
+      (cond ((< fill 0)
+	     (when (> (abs fill) 1)
+	       (ein:log 'warn "ein:worksheet--jigger-undo-list: large desync fill=%s, recovering" fill))
 	     (setq ein:%which-cell% (nthcdr (- fill) ein:%which-cell%)))
 	    ((> fill 0)
-	     (when (and (> fill 1) multiple-cursors-p)
-	       (ein:log 'debug "multiple-cursors-mode exception fill %s" fill))
+	     (when (> fill 1)
+	       (ein:log 'warn "ein:worksheet--jigger-undo-list: large desync fill=%s, recovering" fill))
 	     (setq ein:%which-cell% (nconc (make-list fill (car ein:%which-cell%))
 				       ein:%which-cell%)))))
     (let ((len-a (length buffer-undo-list))

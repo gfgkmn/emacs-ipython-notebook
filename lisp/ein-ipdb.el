@@ -77,9 +77,9 @@
   ;; Remove from hash table immediately to prevent output routing race condition
   (let ((kernel (ein:$ipdb-session-kernel session)))
     (remhash (ein:$kernel-kernel-id kernel) *ein:ipdb-sessions*))
-  (awhen (get-buffer-process (ein:$ipdb-session-buffer session))
-    (when (process-live-p it)
-      (kill-process it))))
+  (when-let ((proc (get-buffer-process (ein:$ipdb-session-buffer session))))
+    (when (process-live-p proc)
+      (kill-process proc))))
 
 (defun ein:ipdb-cleanup-session (session)
   (let ((kernel (ein:$ipdb-session-kernel session))
@@ -96,9 +96,9 @@
             (delete-window win)
           (bury-buffer buffer))))
     ;; Switch to notebook buffer (use switch-to-buffer to avoid creating new window)
-    (awhen (ein:notebook-buffer notebook)
-      (when (buffer-live-p it)
-        (switch-to-buffer it)))))
+    (when-let ((nb-buffer (ein:notebook-buffer notebook)))
+      (when (buffer-live-p nb-buffer)
+        (switch-to-buffer nb-buffer)))))
 
 (defun ein:ipdb--handle-iopub-reply (kernel packet)
   "Handle iopub reply for ipdb session.
