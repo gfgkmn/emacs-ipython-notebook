@@ -584,10 +584,11 @@ kernel and funcall CALLBACK (kernel)"
         msg-type msg-id parent-id)
       (ein:case-equal msg-type
         (("stream" "display_data" "pyout" "pyerr" "error" "execute_result")
-         (if (ein:ipdb-get-session kernel)
-             ;; During debug: route output ONLY to ipdb buffer
-             (ein:ipdb--handle-iopub-reply kernel packet)
-           ;; Normal: route output to cell
+         (if (and (ein:ipdb-get-session kernel)
+                  (ein:ipdb--handle-iopub-reply kernel packet))
+             ;; During debug: output routed to ipdb buffer
+             nil
+           ;; Normal: route output to cell (also when ipdb session is dead)
            (aif (plist-get callbacks :output) ;; ein:cell--handle-output
                (ein:funcall-packed it msg-type content metadata)
              (ein:log 'warn (concat "ein:kernel--handle-iopub-reply: "

@@ -85,19 +85,26 @@
     (remhash (ein:$kernel-kernel-id kernel) *ein:ipdb-sessions*)
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
-        (insert "\nFinished\n")))
+        (insert "\nFinished\n"))
+      ;; Hide ipdb buffer window (don't kill buffer)
+      (when-let ((win (get-buffer-window buffer)))
+        (delete-window win)))
     (awhen (ein:notebook-buffer notebook)
       (when (buffer-live-p it)
         (pop-to-buffer it)))))
 
 (defun ein:ipdb--handle-iopub-reply (kernel packet)
+  "Handle iopub reply for ipdb session.
+Returns t if handled, nil if session is dead and output should go elsewhere."
   (cl-destructuring-bind
       (&key header content &allow-other-keys)
       (ein:json-read-from-string packet)
     (let* ((session (ein:ipdb-get-session kernel))
            (buffer (and session (ein:$ipdb-session-buffer session)))
            (process (and buffer (buffer-live-p buffer) (get-buffer-process buffer))))
-      (when (and process (process-live-p process))
+      (cond
+       ;; Process is live - handle output
+       ((and process (process-live-p process))
         (let* ((msg-type (plist-get header :msg_type))
                (ename (plist-get content :ename))
                (text (cond
@@ -122,7 +129,14 @@
               (comint-output-filter process "\n")))
           ;; Stop session on bdbquit error
           (when (and (stringp ename) (string-match-p "bdbquit" ename))
-            (ein:ipdb-stop-session session)))))))
+            (ein:ipdb-stop-session session)))
+        t)  ;; Handled
+       ;; Session exists but process is dead - clean up and return nil
+       (session
+        (ein:ipdb-cleanup-session session)
+        nil)
+       ;; No session
+       (t nil)))))
 
 (defun ein:ipdb-input-sender (session proc input)
   ;; in case of eof, comint-input-sender-no-newline is t
