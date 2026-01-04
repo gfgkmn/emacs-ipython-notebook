@@ -33,7 +33,7 @@
 
 (declare-function ein:kernel--get-msg "ein-kernel")
 
-(cl-defstruct ein:$ipdb-session buffer kernel prompt notebook)
+(cl-defstruct ein:$ipdb-session buffer kernel prompt notebook notebook-point)
 
 (defun ein:ipdb-get-session (kernel)
   (gethash (ein:$kernel-kernel-id kernel) *ein:ipdb-sessions*))
@@ -42,10 +42,15 @@
   (let* ((buffer (get-buffer-create
                   (format "*ipdb: %s*"
                           (ein:$kernel-kernel-id kernel))))
+         ;; Save notebook buffer position before switching to ipdb
+         (nb-buffer (ein:notebook-buffer notebook))
+         (nb-point (and nb-buffer (buffer-live-p nb-buffer)
+                        (with-current-buffer nb-buffer (point))))
          (session (make-ein:$ipdb-session :buffer buffer
                                           :kernel kernel
                                           :prompt prompt
-                                          :notebook notebook)))
+                                          :notebook notebook
+                                          :notebook-point nb-point)))
     (puthash (ein:$kernel-kernel-id kernel) session *ein:ipdb-sessions*)
     (with-current-buffer buffer
       (kill-all-local-variables)
@@ -84,7 +89,8 @@
 (defun ein:ipdb-cleanup-session (session)
   (let ((kernel (ein:$ipdb-session-kernel session))
         (notebook (ein:$ipdb-session-notebook session))
-        (buffer (ein:$ipdb-session-buffer session)))
+        (buffer (ein:$ipdb-session-buffer session))
+        (saved-point (ein:$ipdb-session-notebook-point session)))
     ;; Remove from hash table (may already be removed by ein:ipdb-stop-session)
     (remhash (ein:$kernel-kernel-id kernel) *ein:ipdb-sessions*)
     (when (buffer-live-p buffer)
@@ -95,10 +101,13 @@
         (if (> (count-windows) 1)
             (delete-window win)
           (bury-buffer buffer))))
-    ;; Switch to notebook buffer (use switch-to-buffer to avoid creating new window)
+    ;; Switch to notebook buffer and restore position
     (when-let ((nb-buffer (ein:notebook-buffer notebook)))
       (when (buffer-live-p nb-buffer)
-        (switch-to-buffer nb-buffer)))))
+        (switch-to-buffer nb-buffer)
+        ;; Restore the saved position
+        (when (and saved-point (<= saved-point (point-max)))
+          (goto-char saved-point))))))
 
 (defun ein:ipdb--handle-iopub-reply (kernel packet)
   "Handle iopub reply for ipdb session.
