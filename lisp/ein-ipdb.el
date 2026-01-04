@@ -74,6 +74,9 @@
     (ein:websocket-send-stdin-channel kernel msg)))
 
 (defun ein:ipdb-stop-session (session)
+  ;; Remove from hash table immediately to prevent output routing race condition
+  (let ((kernel (ein:$ipdb-session-kernel session)))
+    (remhash (ein:$kernel-kernel-id kernel) *ein:ipdb-sessions*))
   (awhen (get-buffer-process (ein:$ipdb-session-buffer session))
     (when (process-live-p it)
       (kill-process it))))
@@ -82,16 +85,20 @@
   (let ((kernel (ein:$ipdb-session-kernel session))
         (notebook (ein:$ipdb-session-notebook session))
         (buffer (ein:$ipdb-session-buffer session)))
+    ;; Remove from hash table (may already be removed by ein:ipdb-stop-session)
     (remhash (ein:$kernel-kernel-id kernel) *ein:ipdb-sessions*)
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
         (insert "\nFinished\n"))
-      ;; Hide ipdb buffer window (don't kill buffer)
-      (when-let ((win (get-buffer-window buffer)))
-        (delete-window win)))
+      ;; Close ipdb window if there are multiple windows, otherwise just bury buffer
+      (when-let ((win (get-buffer-window buffer t)))
+        (if (> (count-windows) 1)
+            (delete-window win)
+          (bury-buffer buffer))))
+    ;; Switch to notebook buffer (use switch-to-buffer to avoid creating new window)
     (awhen (ein:notebook-buffer notebook)
       (when (buffer-live-p it)
-        (pop-to-buffer it)))))
+        (switch-to-buffer it)))))
 
 (defun ein:ipdb--handle-iopub-reply (kernel packet)
   "Handle iopub reply for ipdb session.
@@ -127,8 +134,10 @@ Returns t if handled, nil if session is dead and output should go elsewhere."
             (comint-output-filter process text)
             (unless (string-suffix-p "\n" text)
               (comint-output-filter process "\n")))
-          ;; Stop session on bdbquit error
-          (when (and (stringp ename) (string-match-p "bdbquit" ename))
+          ;; Stop session on BdbQuit error (case-insensitive match)
+          (when (and (stringp ename)
+                     (let ((case-fold-search t))
+                       (string-match-p "bdbquit" ename)))
             (ein:ipdb-stop-session session)))
         t)  ;; Handled
        ;; Session exists but process is dead - clean up and return nil
