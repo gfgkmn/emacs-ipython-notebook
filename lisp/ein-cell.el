@@ -889,6 +889,9 @@ Called from ewoc pretty printer via `ein:cell-insert-output'."
                                  (error value))
                                img-type
                                t
+                               :scale 1.0
+                               :max-width (or (plist-get ein:output-area-inlined-image-properties :max-width) 1200)
+                               :max-height (or (plist-get ein:output-area-inlined-image-properties :max-height) 900)
                                ein:output-area-inlined-image-properties)))
           (if ein:output-area-inlined-images
               (ein:insert-image image)
