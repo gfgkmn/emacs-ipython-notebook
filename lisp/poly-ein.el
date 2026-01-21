@@ -46,11 +46,18 @@
       (apply f args)
     (save-restriction
       (widen)
-      (let ((range (pm-innermost-range
-                    (or (if (numberp (car args))
-                            (max (funcall modifier (car args)) (point-min)))
-                        (point)))))
-        (narrow-to-region (car range) (cdr range))
+      (let* ((range (pm-innermost-range
+                     (or (if (numberp (car args))
+                             (max (funcall modifier (car args)) (point-min)))
+                         (point))))
+             (range-start (car range))
+             (range-end (cdr range)))
+        ;; Ensure valid range: start < end
+        (when (>= range-start range-end)
+          (setq range-end (min (1+ range-start) (point-max)))
+          (when (>= range-start range-end)
+            (setq range-start (max (1- range-end) (point-min)))))
+        (narrow-to-region range-start range-end)
         (apply f args)))))
 
 (defun poly-ein--decorate-functions ()
@@ -92,18 +99,20 @@
         (save-excursion
           ;; pared down from default `syntax-propertize'
           (with-silent-modifications
-            (let ((parse-sexp-lookup-properties t)
-                  (start (point-min)) ;; i've narrowed in the :around
-                  (end (point-max))
-                  (span (pm-innermost-span pos)))
-              (setq syntax-propertize--done end)
-              (when (eq 'body (nth 0 span))
-                (remove-text-properties start end
-                                        '(syntax-table nil syntax-multiline nil))
-                ;; avoid recursion if syntax-propertize-function calls me (syntax-propertize)
-                (when syntax-propertize-function
-                  (let ((syntax-propertize--done most-positive-fixnum))
-                    (funcall syntax-propertize-function start end))))))))))
+            (let* ((parse-sexp-lookup-properties t)
+                   (start (point-min)) ;; i've narrowed in the :around
+                   (end (point-max))
+                   (span (pm-innermost-span pos)))
+              ;; Validate span and positions
+              (when (and span (< start end) (>= pos start) (<= pos end))
+                (setq syntax-propertize--done end)
+                (when (eq 'body (nth 0 span))
+                  (remove-text-properties start end
+                                          '(syntax-table nil syntax-multiline nil))
+                  ;; avoid recursion if syntax-propertize-function calls me (syntax-propertize)
+                  (when syntax-propertize-function
+                    (let ((syntax-propertize--done most-positive-fixnum))
+                      (funcall syntax-propertize-function start end)))))))))))
   (add-function
    :before-until (symbol-function 'syntax-propertize)
    #'poly-ein--syntax-propertize)
@@ -293,6 +302,18 @@ TYPE can be \\='body, nil."
                            ,(or (ein:aand (ein:cell-next cell)
                                           (ein:cell-input-pos-min it))
                                 (point-max)))))))
+     ;; Validate span: ensure start < end (at least width 1)
+     ;; Zero-width or negative spans cause "args-out-of-range" errors
+     (let ((span-start (nth 1 span))
+           (span-end (nth 2 span)))
+       (when (>= span-start span-end)
+         ;; Fix invalid span by expanding to at least 1 char
+         (setq span-end (min (1+ span-start) (point-max)))
+         (when (>= span-start span-end)
+           ;; If still invalid, use safe defaults
+           (setq span-start (max (1- span-end) (point-min))))
+         (setf (nth 1 span) span-start)
+         (setf (nth 2 span) span-end)))
      (append span (list result-cm)))))
 
 (defun poly-ein-fontify-buffer (buffer)
@@ -317,9 +338,19 @@ TYPE can be \\='body, nil."
 (defvar jit-lock-end)
 (defun poly-ein--hem-jit-lock (start _end _old-len)
   (when (and poly-ein-mode (not pm-initialization-in-progress))
-    (let ((range (pm-innermost-range (or start (point)))))
-      (setq jit-lock-start (max jit-lock-start (car range)))
-      (setq jit-lock-end (min jit-lock-end (cdr range))))))
+    (let* ((range (pm-innermost-range (or start (point))))
+           (range-start (car range))
+           (range-end (cdr range)))
+      ;; Ensure valid range: start < end
+      (when (>= range-start range-end)
+        (setq range-end (min (1+ range-start) (point-max)))
+        (when (>= range-start range-end)
+          (setq range-start (max (1- range-end) (point-min)))))
+      (setq jit-lock-start (max jit-lock-start range-start))
+      (setq jit-lock-end (min jit-lock-end range-end))
+      ;; Final validation: ensure jit-lock-start < jit-lock-end
+      (when (>= jit-lock-start jit-lock-end)
+        (setq jit-lock-end (min (1+ jit-lock-start) (point-max)))))))
 
 (defun poly-ein-initialize (type)
   (poly-ein--remove-hook "polymode" after-change-functions)
@@ -479,6 +510,11 @@ But `C-x b` seems to consult `buffer-list' and not the C (window)->prev_buffers.
            (range (pm-innermost-range (or span-start (point)))))
       (setq span-start (max (or span-start (car range)) (car range)))
       (setq span-end (min (or span-end (cdr range)) (cdr range)))
+      ;; Ensure valid range: start < end
+      (when (>= span-start span-end)
+        (setq span-end (min (1+ span-start) (point-max)))
+        (when (>= span-start span-end)
+          (setq span-start (max (1- span-end) (point-min)))))
       (append (list span-start span-end) (cddr args)))))
 
 (defsubst poly-ein--unrelated-span (&optional beg _end)
