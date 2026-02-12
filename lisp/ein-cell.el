@@ -1007,6 +1007,113 @@ Called from ewoc pretty printer via `ein:cell-insert-output'."
    :clear_output   (cons #'ein:cell--handle-clear-output cell)
    :set_next_input (cons #'ein:cell--handle-set-next-input cell)))
 
+(defun ein:ssh-get-hostname-for-host (host)
+  "Get the Hostname value for HOST from ~/.ssh/config."
+  (let ((ssh-config-file (expand-file-name "~/.ssh/config"))
+        (hostname nil))
+    (when (file-exists-p ssh-config-file)
+      (with-temp-buffer
+        (insert-file-contents ssh-config-file)
+        (goto-char (point-min))
+        (when (re-search-forward
+               (format "^\\s-*[Hh]ost\\s-+%s\\s-*$" (regexp-quote host)) nil t)
+          (let ((block-end (save-excursion
+                             (if (re-search-forward "^\\s-*[Hh]ost\\s-" nil t)
+                                 (match-beginning 0)
+                               (point-max)))))
+            (when (re-search-forward "^\\s-*[Hh]ostname\\s-+\\(.+\\)$" block-end t)
+              (setq hostname (string-trim (match-string 1))))))))
+    hostname))
+
+(defun ein:ssh-get-host-for-hostname (hostname)
+  "Get the Host alias for HOSTNAME from ~/.ssh/config."
+  (let ((ssh-config-file (expand-file-name "~/.ssh/config"))
+        (hosts '()))
+    (when (file-exists-p ssh-config-file)
+      (with-temp-buffer
+        (insert-file-contents ssh-config-file)
+        (goto-char (point-min))
+        (let ((current-host nil))
+          (while (not (eobp))
+            (cond
+             ((looking-at "^\\s-*[Hh]ost\\s-+\\(.+\\)$")
+              (setq current-host (string-trim (match-string 1))))
+             ((looking-at (format "^\\s-*[Hh]ostname\\s-+%s\\s-*$"
+                                  (regexp-quote hostname)))
+              (when current-host
+                (push current-host hosts))))
+            (forward-line 1)))))
+    hosts))
+
+(defun ein:resolve-ssh-host (host)
+  "Resolve HOST to an SSH config alias if possible.
+If HOST is an IP, look up the Host alias for that Hostname.
+Otherwise look up the Hostname for that Host alias.
+Returns the best host string to use in a TRAMP path."
+  (if (string-match-p "\\`[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+\\'" host)
+      (or (car (ein:ssh-get-host-for-hostname host)) host)
+    (if (ein:ssh-get-hostname-for-host host) host host)))
+
+(defun ein:cell--make-tramp-directory (kernel dir)
+  "Return DIR, possibly prefixed with a TRAMP remote path.
+If KERNEL's url-or-port points to a non-localhost server, return
+a TRAMP path using `tramp-default-method' and resolving the host
+through ~/.ssh/config.  Otherwise return DIR as-is."
+  (let* ((url-or-port (ein:$kernel-url-or-port kernel))
+         (parsed (url-generic-parse-url
+                  (if (or (integerp url-or-port)
+                          (and (stringp url-or-port)
+                               (string-match-p "\\`[0-9]+\\'" url-or-port)))
+                      (format "http://localhost:%s" url-or-port)
+                    url-or-port)))
+         (host (url-host parsed)))
+    (if (or (null host)
+            (string= host "")
+            (string= host "localhost")
+            (string= host "127.0.0.1")
+            (string= host "::1"))
+        dir
+      (let ((resolved (ein:resolve-ssh-host host))
+            (method (or (bound-and-true-p tramp-default-method) "ssh")))
+        (format "/%s:%s:%s" method resolved dir)))))
+
+(defun ein:cell--sync-default-directory (cell)
+  "Silently query kernel cwd and update buffer's `default-directory'."
+  (when-let* ((kernel (ein:oref-safe cell 'kernel))
+              (buf    (ein:cell-buffer cell))
+              (_live  (ein:kernel-live-p kernel)))
+    (let ((target-buf (or (buffer-base-buffer buf) buf))
+          (ue (make-hash-table :test 'equal)))
+      (puthash "_cwd" "__import__('os').getcwd()" ue)
+      (ein:kernel-execute
+       kernel
+       ""
+       (list :execute_reply
+             (cons (lambda (pack content _metadata)
+                     (when (equal (plist-get content :status) "ok")
+                       (when-let* ((ue (plist-get content :user_expressions))
+                                   (cwd-result (plist-get ue :_cwd))
+                                   (data (plist-get cwd-result :data))
+                                   (text (plist-get data :text/plain))
+                                   (raw-dir (string-trim text "'" "'")))
+                         (when (> (length raw-dir) 0)
+                           (let* ((buf (car pack))
+                                  (kernel (cdr pack))
+                                  (dir (file-name-as-directory
+                                        (ein:cell--make-tramp-directory kernel raw-dir))))
+                             (when (buffer-live-p buf)
+                               (with-current-buffer buf
+                                 (setq default-directory dir))
+                               (dolist (b (buffer-list))
+                                 (when (and (buffer-live-p b)
+                                            (eq (buffer-base-buffer b) buf))
+                                   (with-current-buffer b
+                                     (setq default-directory dir))))))))))
+                   (cons target-buf kernel)))
+       :silent t
+       :store-history nil
+       :user-expressions ue))))
+
 (cl-defmethod ein:cell--handle-execute-reply ((cell ein:codecell) content metadata)
   (when (buffer-live-p (ein:cell-buffer cell))
     (ein:cell-set-input-prompt cell (plist-get content :execution_count))
@@ -1015,7 +1122,8 @@ Called from ewoc pretty printer via `ein:cell-insert-output'."
         (ein:cell--handle-output cell "error" content metadata)
       (let ((events (slot-value cell 'events)))
         (ein:events-trigger events 'set_dirty.Worksheet (list :value t :cell cell))
-        (ein:events-trigger events 'maybe_reset_undo.Worksheet cell)))))
+        (ein:events-trigger events 'maybe_reset_undo.Worksheet cell))
+      (ein:cell--sync-default-directory cell))))
 
 (cl-defmethod ein:cell--handle-set-next-input ((cell ein:codecell) text)
   (when (buffer-live-p (ein:cell-buffer cell))
